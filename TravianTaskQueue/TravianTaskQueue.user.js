@@ -12,14 +12,14 @@
 // @exclude     *.css
 // @exclude     *.js
 
-// @version     2.0.28
+// @version     2.0.30
 // ==/UserScript==
 
 (function () {
 
 function allInOneTTQ () {
 notRunYet = false;
-var sCurrentVersion = "2.0.28";
+var sCurrentVersion = "2.0.30";
 
 //find out if Server errors
 var strTitle = document.title;
@@ -3866,6 +3866,216 @@ function ttqUpdatePanel(aTasks,tTime){
 // *** End Helper Functions ***
 
 // *** Begin GreaseMonkey Menu Block ***
+function ttqImportGetValue(obj, keys, defaultValue) {
+	for (var i = 0; i < keys.length; i++) {
+		if (typeof(obj[keys[i]]) != "undefined") return obj[keys[i]];
+	}
+	return defaultValue;
+}
+
+function ttqImportNormalizeOptions(options) {
+	if (options instanceof Array) return options.join("_");
+	if (typeof(options) == "string" || typeof(options) == "number") return "" + options;
+	throw new Error("options must be a string or an array");
+}
+
+function ttqImportNormalizeTimestamp(value) {
+	if (typeof(value) == "number" || /^\d+$/.test(value)) {
+		value = parseInt(value);
+		return value > 9999999999 ? Math.floor(value / 1000) : value;
+	}
+
+	var match = ("" + value).match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
+	if (match) {
+		return Math.floor(new Date(parseInt(match[1]), parseInt(match[2])-1, parseInt(match[3]), parseInt(match[4]), parseInt(match[5]), parseInt(match[6] || 0)).getTime() / 1000);
+	}
+
+	value = Date.parse(value);
+	if (!isNaN(value)) return Math.floor(value / 1000);
+	throw new Error("missing or invalid time");
+}
+
+function ttqImportTaskTimestamp(task) {
+	var now = Math.floor(Date.now() / 1000);
+	var afterSeconds = ttqImportGetValue(task, ["afterSeconds", "after"], null);
+	if (afterSeconds != null && afterSeconds !== "") return now + parseInt(afterSeconds);
+
+	var afterMinutes = ttqImportGetValue(task, ["afterMinutes"], null);
+	if (afterMinutes != null && afterMinutes !== "") return now + parseInt(afterMinutes) * 60;
+
+	var afterHours = ttqImportGetValue(task, ["afterHours"], null);
+	if (afterHours != null && afterHours !== "") return now + parseInt(afterHours) * 3600;
+
+	return ttqImportNormalizeTimestamp(ttqImportGetValue(task, ["timestamp", "when", "time", "at"], ""));
+}
+
+function ttqImportNormalizeTask(task, index) {
+	var normalized = {};
+	if (typeof(task) == "string") task = task.split(",");
+
+	if (task instanceof Array) {
+		if (task.length < 4) throw new Error("task " + (index+1) + " has fewer than 4 fields");
+		normalized.task = "" + task[0];
+		normalized.when = ttqImportNormalizeTimestamp(task[1]);
+		normalized.target = "" + task[2];
+		normalized.options = ttqImportNormalizeOptions(task[3]);
+		normalized.buildingGID = typeof(task[4]) == "undefined" || task[4] === "" ? undefined : task[4];
+		normalized.villageDid = typeof(task[5]) == "undefined" || task[5] === "" ? undefined : task[5];
+		return normalized;
+	}
+
+	normalized.task = "" + ttqImportGetValue(task, ["task", "taskType", "type", "iTask"], "");
+	normalized.when = ttqImportTaskTimestamp(task);
+	normalized.target = "" + ttqImportGetValue(task, ["target", "timerTarget"], "");
+	normalized.options = ttqImportNormalizeOptions(ttqImportGetValue(task, ["options", "opts", "timerOptions"], null));
+	normalized.buildingGID = ttqImportGetValue(task, ["buildingGID", "buildingGid", "gid"], undefined);
+	normalized.villageDid = ttqImportGetValue(task, ["villageDid", "villageDID", "villageId", "village", "did"], undefined);
+	return normalized;
+}
+
+function ttqImportResourceFieldTasks(preset) {
+	var layoutFields = {
+		"4446": {"W":[1,3,14,17], "C":[5,6,16,18], "I":[4,7,10,11], "CR":[2,8,9,12,13,15]},
+		"5346": {"W":[1,3,5,14,17], "C":[6,16,18], "I":[4,7,10,11], "CR":[2,8,9,12,13,15]},
+		"5436": {"W":[1,3,4,14,17], "C":[5,6,16,18], "I":[7,10,11], "CR":[2,8,9,12,13,15]},
+		"3546": {"W":[3,14,17], "C":[4,5,6,16,18], "I":[1,7,10,11], "CR":[2,8,9,12,13,15]},
+		"4536": {"W":[1,3,14,17], "C":[4,5,6,16,18], "I":[7,10,11], "CR":[2,8,9,12,13,15]},
+		"4347": {"W":[4,5,14,17], "C":[6,16,18], "I":[1,7,10,11], "CR":[2,3,8,9,12,13,15]},
+		"3339": {"W":[3,14,17], "C":[6,16,18], "I":[7,10,11], "CR":[1,2,4,5,8,9,12,13,15]},
+		"1115": {"W":[3], "C":[16], "I":[4], "CR":[1,2,5,6,7,8,9,10,11,12,13,14,15,17,18]}
+	};
+	var fieldMeta = {
+		"W": {gid:1, name:"Woodcutter", a:1780/3, k:1.6, b:1000/3},
+		"C": {gid:2, name:"Clay Pit", a:1660/3, k:1.6, b:1000/3},
+		"I": {gid:3, name:"Iron Mine", a:2350/3, k:1.6, b:1000/3},
+		"CR": {gid:4, name:"Cropland", a:1450/3, k:1.6, b:1000/3}
+	};
+	var layoutKey = "" + ttqImportGetValue(preset, ["layout", "layoutKey"], "");
+	var villageDid = "" + ttqImportGetValue(preset, ["villageDid", "villageDID", "villageId", "village", "did"], "");
+	if (!layoutFields[layoutKey]) throw new Error("unknown resource field layout");
+	if (!villageDid) throw new Error("missing villageDid");
+
+	var fromLevel = parseInt(ttqImportGetValue(preset, ["fromLevel", "from"], 0));
+	var toLevel = parseInt(ttqImportGetValue(preset, ["toLevel", "to"], 5));
+	var serverSpeed = parseFloat(ttqImportGetValue(preset, ["serverSpeed", "speed"], 1));
+	var mainBuildingLevel = parseInt(ttqImportGetValue(preset, ["mainBuildingLevel", "mb"], 1));
+	var waitSeconds = parseInt(ttqImportGetValue(preset, ["waitSeconds", "wait"], 10));
+	var offset = parseInt(ttqImportGetValue(preset, ["startAfterSeconds", "startAfter"], waitSeconds));
+	if (isNaN(fromLevel) || isNaN(toLevel) || fromLevel < 0 || toLevel <= fromLevel) throw new Error("invalid level range");
+	if (isNaN(serverSpeed) || serverSpeed <= 0) throw new Error("invalid serverSpeed");
+	if (isNaN(mainBuildingLevel) || mainBuildingLevel < 1) throw new Error("invalid mainBuildingLevel");
+	if (isNaN(waitSeconds) || waitSeconds < 0) throw new Error("invalid waitSeconds");
+	if (isNaN(offset) || offset < 0) throw new Error("invalid startAfterSeconds");
+
+	var layout = layoutFields[layoutKey];
+	var slotTypes = {};
+	for (var type in layout) {
+		if (layout.hasOwnProperty(type)) {
+			for (var i = 0; i < layout[type].length; i++) slotTypes[layout[type][i]] = type;
+		}
+	}
+
+	var tasks = [];
+	var mainBuildingFactor = Math.pow(0.964, mainBuildingLevel - 1);
+	for (var slot = 1; slot <= 18; slot++) {
+		var fieldType = slotTypes[slot];
+		if (!fieldType) throw new Error("layout is missing slot " + slot);
+		var field = fieldMeta[fieldType];
+		for (var level = fromLevel + 1; level <= toLevel; level++) {
+			tasks.push({
+				task: 1,
+				afterSeconds: offset,
+				target: "" + slot,
+				options: field.gid + "_[" + field.name + "]",
+				buildingGID: "undefined",
+				villageDid: villageDid
+			});
+			offset += Math.ceil(((field.a * Math.pow(field.k, level - 1)) - field.b) * mainBuildingFactor / serverSpeed) + waitSeconds;
+		}
+	}
+	return tasks;
+}
+
+function ttqImportTasksFromJson(jsonText, replaceExisting) {
+	var parsed = JSON.parse(jsonText);
+	var tasks = parsed instanceof Array ? parsed : parsed.tasks;
+	if (!(tasks instanceof Array) && parsed.preset == "resourceFields") tasks = ttqImportResourceFieldTasks(parsed);
+	if (!(tasks instanceof Array)) throw new Error("JSON must be an array or an object with a tasks array");
+	if (tasks.length < 1) throw new Error("No tasks found in import");
+
+	if (replaceExisting) setVariable("TTQ_TASKS", "");
+
+	var imported = 0;
+	var errors = [];
+	for (var i = 0; i < tasks.length; i++) {
+		try {
+			var task = ttqImportNormalizeTask(tasks[i], i);
+			if (!/^[0-9]$/.test(task.task)) throw new Error("unsupported task type");
+			if (!task.target) throw new Error("missing target");
+			if (!task.options) throw new Error("missing options");
+			if (isNaN(task.when) || task.when < 1) throw new Error("invalid timestamp");
+
+			setTask(task.task, task.when, task.target, task.options, undefined, task.villageDid, false, task.buildingGID);
+			imported++;
+		} catch (e) {
+			errors.push("Task " + (i+1) + ": " + e.message);
+		}
+	}
+
+	var data = getVariable("TTQ_TASKS");
+	refreshTaskList(data == "" ? [] : data.split("|"));
+	ttqUpdatePanel(data);
+
+	if (imported > 0) {
+		printMsg(imported + " task(s) imported." + (errors.length > 0 ? "<br><br>" + errors.join("<br>") : ""), errors.length > 0);
+	} else {
+		printMsg("No tasks imported.<br><br>" + errors.join("<br>"), true);
+	}
+}
+
+function promptImportTasks() {
+	var oldWrapper = $id("ttq_import_wrapper");
+	if (oldWrapper) oldWrapper.parentNode.removeChild(oldWrapper);
+
+	var example = '{"preset":"resourceFields","layout":"4446","villageDid":"4446","fromLevel":0,"toLevel":5,"serverSpeed":3,"mainBuildingLevel":1,"waitSeconds":10}';
+	var wrapper = $e("div", [["id", "ttq_import_wrapper"]]);
+	wrapper.style.position = "absolute";
+	var formCoords = getOption("FORM_POSITION", "215px_215px").split("_");
+	wrapper.style.top = formCoords[0];
+	wrapper.style.left = formCoords[1];
+	wrapper.style.backgroundColor = "#FFFFFF";
+	wrapper.style.border = "2px solid black";
+	wrapper.style.borderRadius = "6px";
+	wrapper.style.padding = "8px";
+	wrapper.style.zIndex = 502;
+	wrapper.style.color = "black";
+	wrapper.style.fontSize = "12px";
+	wrapper.style.maxWidth = "520px";
+
+	wrapper.innerHTML =
+		"<div id='ttq_import_title' class='handle' style='font-weight:bold;margin-bottom:6px;'>" +
+		"<img src='" + sCloseBtn + "' alt='[" + aLangStrings[56] + "]' title='" + aLangStrings[56] + "' id='ttq_close_btn' class='ttq_close_btn' onclick='document.body.removeChild(document.getElementById(\"ttq_import_wrapper\"));' />" +
+		"Import TTQ tasks</div>" +
+		"<textarea id='ttq_import_text' style='width:500px;height:180px;display:block;' placeholder='" + example.replace(/'/g, "&#39;") + "'></textarea>" +
+		"<label style='display:block;margin:6px 0;'><input type='checkbox' id='ttq_import_replace' /> Replace existing queued tasks</label>" +
+		"<div style='font-size:11px;margin:6px 0;'>Accepted: JSON array, {tasks:[...]}, raw task arrays, raw task strings, or {preset:\"resourceFields\",...}. Time fields: timestamp, at, afterSeconds, afterMinutes, afterHours.</div>";
+
+	var importBtn = generateButton("Import", function() {
+		try {
+			ttqImportTasksFromJson($id("ttq_import_text").value, $id("ttq_import_replace").checked);
+			var currentWrapper = $id("ttq_import_wrapper");
+			if (currentWrapper) currentWrapper.parentNode.removeChild(currentWrapper);
+		} catch (e) {
+			printMsg("Import failed: " + e.message, true);
+		}
+	});
+	wrapper.appendChild(importBtn);
+
+	document.body.appendChild(wrapper);
+	makeDraggable($id("ttq_import_title"));
+	return false;
+}
+
 function promptRace() {
 	iMyRace = 'x';
 	while ( isNaN(iMyRace) ) {
@@ -3968,6 +4178,7 @@ function onLoad() {
 
 	TTQ_registerMenuCommand(aLangMenuOptions[3], promptRace);
 	TTQ_registerMenuCommand(aLangMenuOptions[4], promptHistory);
+	TTQ_registerMenuCommand("Import tasks", promptImportTasks);
 	TTQ_registerMenuCommand("Language", promptLang);
 	TTQ_registerMenuCommand(aLangMenuOptions[5], promptReset);
 	TTQ_registerMenuCommand(aLangMenuOptions[9], promptDebug);
