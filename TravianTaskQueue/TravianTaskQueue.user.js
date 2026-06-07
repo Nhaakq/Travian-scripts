@@ -54,7 +54,7 @@ var starttime = Date.now();
 var myPlayerID;
 
 // Your local computer time MUST still be correct (both time and date!).
-var bUseServerTime = false; //getOption("USE_SERVER_TIME", false, "boolean"); //IMPORTANT!!! If true, you must be using 24-hour format on your server, otherwise there WILL be errors.
+var bUseServerTime = false; // loaded from USE_SERVER_TIME in onLoad(); IMPORTANT!!! If true, you must be using 24-hour format on your server, otherwise there WILL be errors.
 var bLocked = false; // for locking the TTQ_TASKS variables
 var ttqBusyTask = 0; // for detecting if TTQ is still busy processing a task
 var oIntervalReference = null;
@@ -248,6 +248,91 @@ function formatDate(yyyy, mm, dd, hh, min, sec) {
 	if(min < 10) {min = "0" + min;}
 	if(sec < 10) {sec = "0" + sec;}
 	return yyyy+"/"+mm+"/"+dd+" "+hh+":"+min+":"+sec;
+}
+
+function isInt(x) {
+	var y = parseInt(x, 10);
+	if (isNaN(y)) return false;
+	return x == y && x.toString() == y.toString();
+}
+
+/**
+ * @return Server timezone offset from GMT in hours, or -999 if unavailable.
+ */
+function getServerTimeOffset() {
+	_log(3, "-> getServerTimeOffset()");
+	var iServerTimeOffset = getOption("SERVER_TIME_OFFSET", false);
+	if (iServerTimeOffset !== false && iServerTimeOffset !== "") {
+		var parsed = parseInt(iServerTimeOffset, 10);
+		if (!isNaN(parsed)) return parsed;
+	}
+	var oServerTime = $id("servertime");
+	if (oServerTime) {
+		var aMatch = (oServerTime.textContent || oServerTime.innerHTML).match(/GMT\s*([+-]?\d{1,2})/i);
+		if (aMatch) return parseInt(aMatch[1], 10);
+	}
+	var iOffset = xpath("id('ltime')/span[2]");
+	if (iOffset.snapshotLength >= 1) {
+		iOffset = iOffset.snapshotItem(0).innerHTML;
+		aMatch = iOffset.match(/([A-Z]{3})([-+]{1}[0-9]{1,2})/i);
+		if (aMatch) {
+			iServerTimeOffset = parseInt(aMatch[2], 10);
+			switch (aMatch[1]) {
+				case "AST": return iServerTimeOffset - 4;
+				case "EST": return iServerTimeOffset - 5;
+				case "CST": return iServerTimeOffset - 6;
+				case "MEZ": return iServerTimeOffset + 1;
+				case "UTC":
+				case "GMT":
+				default: return iServerTimeOffset;
+			}
+		}
+	}
+	return -999;
+}
+
+/**
+ * @return Current server time as formatted string, timestamp (ms), or false.
+ */
+function getServerTime(bReturnTimestamp) {
+	_log(3, "-> getServerTime()");
+	var iTimeOffset = getServerTimeOffset();
+	if (iTimeOffset == -999) return false;
+
+	var sTimeEl = xpath("//div[@id='servertime']//span[contains(@class,'timer')]", document, true);
+	if (!sTimeEl) return false;
+	var aMatch = (sTimeEl.textContent || sTimeEl.innerHTML).trim().match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+	if (!aMatch) return false;
+
+	var UTCHoursServer = parseInt(aMatch[1], 10) - iTimeOffset;
+	if (UTCHoursServer > 23) UTCHoursServer -= 24;
+	if (UTCHoursServer < 0) UTCHoursServer += 24;
+
+	var oLocalTime = new Date();
+	var yy = oLocalTime.getUTCFullYear();
+	var mm = oLocalTime.getUTCMonth();
+	var dd = oLocalTime.getUTCDate();
+	var hh = oLocalTime.getUTCHours();
+
+	if (hh == UTCHoursServer) {
+		// same UTC hour
+	} else if (hh == 23 && UTCHoursServer == 0) {
+		dd += 1;
+	} else if (hh == 0 && UTCHoursServer == 23) {
+		dd -= 1;
+	} else {
+		_log(2, "Warning! Local UTC time differs from server UTC time by more than 1 hour.");
+		return false;
+	}
+
+	var oServerDate = new Date(yy, mm, dd, UTCHoursServer, parseInt(aMatch[2], 10), parseInt(aMatch[3], 10));
+	var newtimestamp = oServerDate.getTime() - (oLocalTime.getTimezoneOffset() * 60000);
+
+	if (bReturnTimestamp) return newtimestamp;
+
+	newtimestamp += (iTimeOffset * 3600000);
+	oServerDate = new Date(newtimestamp);
+	return formatDate(oServerDate.getUTCFullYear(), (oServerDate.getUTCMonth() + 1), oServerDate.getUTCDate(), oServerDate.getUTCHours(), oServerDate.getUTCMinutes(), oServerDate.getUTCSeconds());
 }
 // *** End Date/Time Block ***
 
@@ -1365,8 +1450,18 @@ function refreshHistory(aTasks) {
 
 function makeHistoryRow(aTask, index/*, iServerTimeOffset*/) {
 		_log(3,"Begin makeHistoryRow()");
-		var oDate = new Date( parseInt(aTask[1]) * 1000 );
-		var sTime = "<span style=' cursor:pointer;' id='ttq_history_tasktime_" +index+ "' title='This is your local time. Click to add new task.' ttq_taskid='" +index+ "' >" + oDate.toLocaleString() + "</span>";
+		var sTimeTitle = bUseServerTime ? "This is the server time. Click to add new task." : "This is your local time. Click to add new task.";
+		if (bUseServerTime) {
+			var iServerTimeOffset = getServerTimeOffset();
+			if (iServerTimeOffset == -999) iServerTimeOffset = 0;
+			var oDate = new Date((parseInt(aTask[1]) + (iServerTimeOffset * 3600)) * 1000);
+			var sTimeText = oDate.toGMTString();
+			sTimeText = sTimeText.substring(0, sTimeText.length - 4);
+		} else {
+			var oDate = new Date(parseInt(aTask[1]) * 1000);
+			var sTimeText = oDate.toLocaleString();
+		}
+		var sTime = "<span style=' cursor:pointer;' id='ttq_history_tasktime_" +index+ "' title='" + sTimeTitle + "' ttq_taskid='" +index+ "' >" + sTimeText + "</span>";
 
 		var oHistoryRow = document.createElement("div");
 		oHistoryRow.id = "ttq_history_row_" +index;
@@ -3164,16 +3259,38 @@ function displayTimerForm(iTask, target, options, timestamp, taskindex, villaged
 	var oTimerForm = document.createElement("form");
 	oTimerForm.setAttribute('name','myForm');
 	//Suggest the current time. Can be local or server time.
-		var sTimeType = "This is your local time.";
+		var sTimeType = bUseServerTime ? "This is the server time." : "This is your local time.";
 
-		if(timestamp) var date = new Date(timestamp * 1000);
-		else var date = new Date();
-		var dd = date.getDate();
-		var mm = date.getMonth() + 1;
-		var yyyy = date.getFullYear();
-		var hh = date.getHours();
-		var min = date.getMinutes();
-		var sec = date.getSeconds();
+		if (bUseServerTime) {
+			var iServerTimeOffset = getServerTimeOffset();
+			if (iServerTimeOffset == -999) iServerTimeOffset = 0;
+			if (timestamp) {
+				var date = new Date((parseInt(timestamp) + (iServerTimeOffset * 3600)) * 1000);
+			} else {
+				var sServerTime = getServerTime();
+				if (sServerTime) {
+					var reNow = /^(\d{4})\/(\d{1,2})\/(\d{1,2}) (\d{1,2}):(\d{1,2}):(\d{1,2})$/;
+					var mNow = sServerTime.match(reNow);
+					if (mNow) date = new Date(Date.UTC(mNow[1], mNow[2] - 1, mNow[3], mNow[4], mNow[5], mNow[6]));
+					else date = new Date();
+				} else date = new Date();
+			}
+			var dd = date.getUTCDate();
+			var mm = date.getUTCMonth() + 1;
+			var yyyy = date.getUTCFullYear();
+			var hh = date.getUTCHours();
+			var min = date.getUTCMinutes();
+			var sec = date.getUTCSeconds();
+		} else {
+			if (timestamp) var date = new Date(timestamp * 1000);
+			else var date = new Date();
+			var dd = date.getDate();
+			var mm = date.getMonth() + 1;
+			var yyyy = date.getFullYear();
+			var hh = date.getHours();
+			var min = date.getMinutes();
+			var sec = date.getSeconds();
+		}
 
 		//Convert small numbers to conventional format
 		var sTime = formatDate(yyyy, mm, dd, hh, min, sec);
@@ -4076,6 +4193,29 @@ function promptImportTasks() {
 	return false;
 }
 
+function promptUseServerTime() {
+	var iServerTimeOffset = getServerTimeOffset();
+	var promptMsg = (iServerTimeOffset == -999)
+		? aLangMenuOptions[0] + "Please enter your server's timezone offset from GMT in hours.\n(examples: for GMT enter 0, for CET enter 1, for EST enter -5)"
+		: aLangMenuOptions[0] + "Your server's timezone offset was detected as " + iServerTimeOffset + " hours from GMT.\nIf this is not right, enter the correct value. Otherwise leave the box empty.";
+	var userResponse = prompt(promptMsg, (iServerTimeOffset == -999) ? "" : "");
+	while ((userResponse != "" && userResponse != null && !isInt(userResponse)) || (userResponse == "" && iServerTimeOffset == -999)) {
+		if (userResponse == null) return;
+		userResponse = prompt(promptMsg, "");
+	}
+	if (userResponse == null) return;
+	if (userResponse != "") iServerTimeOffset = parseInt(userResponse, 10);
+	else if (iServerTimeOffset == -999) return;
+	setOption("SERVER_TIME_OFFSET", iServerTimeOffset);
+	setOption("USE_SERVER_TIME", true);
+	window.location.reload();
+}
+
+function promptUseLocalTime() {
+	setOption("USE_SERVER_TIME", false);
+	window.location.reload();
+}
+
 function promptRace() {
 	iMyRace = 'x';
 	while ( isNaN(iMyRace) ) {
@@ -4176,6 +4316,9 @@ function onLoad() {
 
 	_log(1,"Begin onLoad()");
 
+	bUseServerTime = getOption("USE_SERVER_TIME", false, "boolean");
+
+	TTQ_registerMenuCommand(bUseServerTime ? aLangMenuOptions[2] : aLangMenuOptions[1], bUseServerTime ? promptUseLocalTime : promptUseServerTime);
 	TTQ_registerMenuCommand(aLangMenuOptions[3], promptRace);
 	TTQ_registerMenuCommand(aLangMenuOptions[4], promptHistory);
 	TTQ_registerMenuCommand("Import tasks", promptImportTasks);
