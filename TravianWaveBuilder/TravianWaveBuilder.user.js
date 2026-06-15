@@ -6,6 +6,7 @@
 // @license        GPL version 3 or any later version; http://www.gnu.org/copyleft/gpl.html
 // @contributionURL https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=56E2JM7DNDHGQ&item_name=Travian+wave+builder+script&currency_code=EUR
 // @match          https://*.travian.com/build.php*
+// @match          https://*.travian.com/profile*
 
 // @version        2.11
 // ==/UserScript==
@@ -17,6 +18,9 @@ var scriptURL = 'https://github.com/adipiciu/Travian-scripts';
 var defInterval = 200;
 var sLang = detectLanguage();
 var langStrings = ["Add attack", "Remove attack", "Move attack up", "Move attack down", "Add multiple attacks (1-12 attacks)", "Interval between attacks, in milliseconds. Minimum interval is 100 ms.", "Attack type", "Interval", "ms"];
+var profileStrings = ["Attack profile", "Select", "Village", "Attack type", "Reinforcement", "Normal attack", "Raid", "Apply first row to selected villages", "Scout mode", "Resources and troops", "Defenses and troops", "Send selected attacks", "No village selected.", "No troops selected for", "Preparing", "Sent", "Failed", "Interval", "ms", "Close", "Hero", "Result", "No villages found on this profile."];
+var fullName = window.location.origin + "/";
+var a2bURL = "build.php?gid=16&tt=2";
 
 /*********************** localization ****************************/
 
@@ -29,6 +33,7 @@ switch(sLang) {
 		break;
 	case "fr-fr": //French
 		langStrings = ["Ajouter une attaque", "Supprimer l'attaque", "Déplacer l'attaque vers le haut", "Déplacer l'attaque vers le bas", "Ajoutez plusieurs attaques (1-12 attaques).", "Intervalle entre les attaques, en millisecondes. L'intervalle minimum est de 100 ms.", "Type d'attaque", "Intervalle", "ms"];
+		profileStrings = ["Attack profile", "Selection", "Village", "Type d'envoi", "Assistance", "Attaque normale", "Pillage", "Appliquer la premiere ligne aux villages selectionnes", "Mode espion", "Ressources et troupes", "Defenses/infrastructure et troupes", "Envoyer les attaques selectionnees", "Aucun village selectionne.", "Aucune troupe selectionnee pour", "Preparation", "Envoye", "Echec", "Intervalle", "ms", "Fermer", "Heros", "Resultat", "Aucun village trouve sur ce profil."];
 		break;
 	case "hu-hu": //Hungarian
 		langStrings = ["Támadás hozzáadása", "Támadás törlése", "Támadás mozgatása fel", "Támadás mozgatása le", "Támadások hozzáadása (1-12 támadások)", "Támadások közötti intervallum (ms). Minimum intervallum 100 ms.", "Támadás típusa", "Intervallum", "ms"];
@@ -307,8 +312,406 @@ function sendWaves () {
 	}
 }
 
+function getTargetMapIdFromHref(href) {
+	if( ! href ) return 0;
+	var match = href.match(/[?&](?:targetMapId|[zd])=(\d+)/i);
+	if( match ) return parseInt(match[1]);
+	try {
+		var url = new URL(href, fullName);
+		var targetId = url.searchParams.get('targetMapId') || url.searchParams.get('d') || url.searchParams.get('z');
+		if( targetId ) return parseInt(targetId);
+	} catch(e) { }
+	return 0;
+}
+
+function getProfileVillageTable() {
+	var content = $g('playerProfile') || $g('content') || document;
+	var table = $g('villages');
+	if( table && table.tagName && table.tagName.toUpperCase() == 'TABLE' ) return table;
+	var tables = $gc('villages',content);
+	for( var i=0; i<tables.length; i++ ) {
+		if( tables[i].tagName && tables[i].tagName.toUpperCase() == 'TABLE' ) return tables[i];
+	}
+	return null;
+}
+
+function parseProfileVillages() {
+	var table = getProfileVillageTable();
+	var villages = [];
+	var known = {};
+	if( ! table || ! table.tBodies || table.tBodies.length < 1 ) return villages;
+	var rows = table.tBodies[0].rows;
+	for( var i=0; i<rows.length; i++ ) {
+		var links = $gt('A',rows[i]);
+		var villageLink = null;
+		var targetId = 0;
+		for( var j=0; j<links.length; j++ ) {
+			targetId = getTargetMapIdFromHref(links[j].getAttribute('href'));
+			if( targetId > 0 ) {
+				villageLink = links[j];
+				break;
+			}
+		}
+		if( targetId < 1 || known[targetId] ) continue;
+		known[targetId] = true;
+		var nameNode = $gc('name',rows[i]);
+		var name = '';
+		if( nameNode.length > 0 ) name = nameNode[0].textContent.onlyText ? nameNode[0].textContent.onlyText().trim() : nameNode[0].textContent.trim();
+		if( name == '' && villageLink ) name = villageLink.textContent.trim();
+		if( name == '' ) name = '#' + targetId;
+		villages.push({id: targetId, name: name});
+	}
+	return villages;
+}
+
+function appendProfileAttackButton(villages) {
+	if( $g('twb_profile_attack_btn') ) return;
+	var content = $g('content') || $g('playerProfile') || document.body;
+	var target = $g('playerProfile') || content;
+	var btn = $e('INPUT',[['id','twb_profile_attack_btn'],['type','button'],['value',profileStrings[0]],['style','margin:6px 0;']]);
+	btn.addEventListener('click', function(){ showProfileAttackPanel(parseProfileVillages()); }, false);
+	if( target.firstChild ) target.insertBefore(btn,target.firstChild);
+	else content.appendChild(btn);
+}
+
+function initProfileAttack() {
+	RB_addStyle(profile_css);
+	function tryInit() {
+		var villages = parseProfileVillages();
+		if( villages.length > 0 ) {
+			appendProfileAttackButton(villages);
+			return true;
+		}
+		return false;
+	}
+	if( tryInit() ) return;
+	var target = $g('playerProfile') || $g('content') || document.body;
+	if( ! target || ! window.MutationObserver ) return;
+	var observer = new MutationObserver(function() {
+		if( tryInit() ) observer.disconnect();
+	});
+	observer.observe(target,{childList:true,subtree:true});
+}
+
+function showProfileAttackPanel(villages) {
+	var old = $g('twb_profile_panel');
+	if( old ) old.parentNode.removeChild(old);
+	if( ! villages || villages.length < 1 ) {
+		alert(profileStrings[22]);
+		return;
+	}
+	var wrapper = $e('DIV',[['id','twb_profile_panel']]);
+	var title = $e('DIV',[['class','twb_profile_title']]);
+	title.appendChild($t(profileStrings[0]));
+	var close = $a('x',[['href','#'],['onclick',jsNone],['title',profileStrings[19]],['class','twb_profile_close']]);
+	close.addEventListener('click', function(){ wrapper.parentNode.removeChild(wrapper); }, false);
+	title.appendChild(close);
+	wrapper.appendChild(title);
+
+	var controls = $e('DIV',[['class','twb_profile_controls']]);
+	var copyBtn = $e('INPUT',[['type','button'],['value',profileStrings[7]]]);
+	copyBtn.addEventListener('click', copyFirstProfileAttackRow, false);
+	var intLabel = $ee('SPAN',profileStrings[17] + ' ',[['style','margin-left:12px;']]);
+	var profileInterval = $e('INPUT',[['id','twb_profile_interval'],['type','text'],['value',defInterval],['size',4],['maxlength',4],['style','text-align:right']]);
+	controls.appendChild(copyBtn);
+	controls.appendChild(intLabel);
+	controls.appendChild(profileInterval);
+	controls.appendChild($t(' ' + profileStrings[18]));
+	wrapper.appendChild(controls);
+
+	var table = $e('TABLE',[['id','twb_profile_table']]);
+	var hrow = $e('TR');
+	hrow.appendChild($c(profileStrings[1]));
+	hrow.appendChild($c(profileStrings[2]));
+	hrow.appendChild($c(profileStrings[3]));
+	for( var i=1; i<11; i++ ) hrow.appendChild($c('t' + i));
+	hrow.appendChild($c(profileStrings[20]));
+	hrow.appendChild($c(profileStrings[8]));
+	hrow.appendChild($c(profileStrings[21]));
+	table.appendChild($ee('THEAD',hrow));
+	var tbody = $e('TBODY');
+	for( i=0; i<villages.length; i++ ) tbody.appendChild(buildProfileAttackRow(villages[i],i));
+	table.appendChild(tbody);
+	wrapper.appendChild(table);
+
+	var send = $e('INPUT',[['type','button'],['value',profileStrings[11]],['style','margin-top:8px;']]);
+	send.addEventListener('click', function(){ sendProfileAttacks(send); }, false);
+	wrapper.appendChild(send);
+	document.body.appendChild(wrapper);
+}
+
+function buildProfileAttackRow(village,index) {
+	var row = $e('TR',[['data-target-id',village.id],['data-target-name',village.name]]);
+	var checkbox = $e('INPUT',[['type','checkbox'],['checked','checked']]);
+	row.appendChild($c(checkbox));
+	row.appendChild($c(village.name));
+	var typeSelect = $e('SELECT',[['class','twb_profile_type']]);
+	typeSelect.appendChild($ee('OPTION',profileStrings[5],[['value','3']]));
+	typeSelect.appendChild($ee('OPTION',profileStrings[6],[['value','4']]));
+	typeSelect.appendChild($ee('OPTION',profileStrings[4],[['value','5']]));
+	row.appendChild($c(typeSelect));
+	for( var i=1; i<12; i++ ) {
+		row.appendChild($c($e('INPUT',[['type','number'],['min','0'],['class','twb_profile_troop'],['data-troop',i],['style','width:42px;']]))); 
+	}
+	var spyBox = $e('DIV');
+	var spyName = 'twb_profile_spy_' + index;
+	spyBox.appendChild($e('INPUT',[['type','radio'],['name',spyName],['value','1'],['checked','checked']]));
+	spyBox.appendChild($t(' ' + profileStrings[9]));
+	spyBox.appendChild($e('BR'));
+	spyBox.appendChild($e('INPUT',[['type','radio'],['name',spyName],['value','2']]));
+	spyBox.appendChild($t(' ' + profileStrings[10]));
+	row.appendChild($c(spyBox));
+	row.appendChild($c('',[['class','twb_profile_result']]));
+	return row;
+}
+
+function copyFirstProfileAttackRow() {
+	var table = $g('twb_profile_table');
+	if( ! table || table.tBodies.length < 1 || table.tBodies[0].rows.length < 2 ) return;
+	var rows = table.tBodies[0].rows;
+	var first = rows[0];
+	var firstTroops = $gc('twb_profile_troop',first);
+	var firstType = $gc('twb_profile_type',first)[0].value;
+	var firstSpy = getCheckedProfileSpy(first);
+	for( var i=1; i<rows.length; i++ ) {
+		var rowChecks = $gt('INPUT',rows[i]);
+		if( rowChecks.length > 0 && ! rowChecks[0].checked ) continue;
+		var rowInputs = $gc('twb_profile_troop',rows[i]);
+		$gc('twb_profile_type',rows[i])[0].value = firstType;
+		for( var j=0; j<firstTroops.length; j++ ) rowInputs[j].value = firstTroops[j].value;
+		setCheckedProfileSpy(rows[i],firstSpy);
+	}
+}
+
+function getCheckedProfileSpy(row) {
+	var inputs = $gt('INPUT',row);
+	for( var i=0; i<inputs.length; i++ ) {
+		if( inputs[i].type == 'radio' && inputs[i].name.indexOf('twb_profile_spy_') == 0 && inputs[i].checked ) return inputs[i].value;
+	}
+	return '1';
+}
+
+function setCheckedProfileSpy(row,value) {
+	var inputs = $gt('INPUT',row);
+	for( var i=0; i<inputs.length; i++ ) {
+		if( inputs[i].type == 'radio' && inputs[i].name.indexOf('twb_profile_spy_') == 0 ) inputs[i].checked = inputs[i].value == value;
+	}
+}
+
+function collectProfileAttackTasks() {
+	var table = $g('twb_profile_table');
+	var tasks = [];
+	if( ! table || table.tBodies.length < 1 ) return tasks;
+	var rows = table.tBodies[0].rows;
+	for( var i=0; i<rows.length; i++ ) {
+		var inputs = $gt('INPUT',rows[i]);
+		if( inputs.length < 1 || ! inputs[0].checked ) continue;
+		var troops = new Array(12);
+		var hasTroops = false;
+		for( var t=1; t<12; t++ ) troops[t] = 0;
+		var troopInputs = $gc('twb_profile_troop',rows[i]);
+		for( var j=0; j<troopInputs.length; j++ ) {
+			var troopId = parseInt(troopInputs[j].getAttribute('data-troop'));
+			var troopValue = parseInt(troopInputs[j].value);
+			if( isNaN(troopValue) || troopValue < 1 ) troopValue = 0;
+			troops[troopId] = troopValue;
+			if( troopValue > 0 ) hasTroops = true;
+		}
+		var result = $gc('twb_profile_result',rows[i])[0];
+		if( ! hasTroops ) {
+			result.innerHTML = '<span style="color:red;">' + profileStrings[13] + '</span>';
+			continue;
+		}
+		tasks.push({
+			row: rows[i],
+			targetId: parseInt(rows[i].getAttribute('data-target-id')),
+			targetName: rows[i].getAttribute('data-target-name'),
+			eventType: $gc('twb_profile_type',rows[i])[0].value,
+			troops: troops,
+			spyMode: getCheckedProfileSpy(rows[i])
+		});
+	}
+	return tasks;
+}
+
+function sendProfileAttacks(button) {
+	var tasks = collectProfileAttackTasks();
+	if( tasks.length < 1 ) {
+		alert(profileStrings[12]);
+		return;
+	}
+	button.disabled = true;
+	var intWave = parseInt($g('twb_profile_interval').value).NaN0();
+	if( intWave < 100 ) intWave = defInterval;
+	var nextWave = 10;
+	for( var i=0; i<tasks.length; i++ ) {
+		setTimeout(function(task){return function(){ sendProfileAttackTask(task,button); };}(tasks[i]),nextWave);
+		nextWave += getRandom(intWave);
+	}
+	setTimeout(function(){ button.disabled = false; },nextWave + 1000);
+}
+
+function setProfileAttackResult(task,text,success) {
+	var result = $gc('twb_profile_result',task.row)[0];
+	result.innerHTML = '<span style="color:' + (success ? 'green' : 'red') + ';">' + text + '</span>';
+}
+
+function getBuildMessage(bld,className) {
+	if( ! bld ) return '';
+	var nodes = $gc(className,bld);
+	var message = '';
+	for( var i=0; i<nodes.length; i++ ) {
+		if( nodes[i].hasAttribute('id') && nodes[i].getAttribute('id') == 'l4' ) continue;
+		if( nodes[i].textContent.trim().length > 0 ) message += nodes[i].textContent.trim() + "\n";
+	}
+	return message.trim();
+}
+
+function confirmProfileAlerts(task,bld) {
+	var message = getBuildMessage(bld,'alert');
+	if( message == '' ) return true;
+	return confirm(task.targetName + "\n" + message);
+}
+
+function sendProfileAttackTask(task,button) {
+	setProfileAttackResult(task,profileStrings[14],true);
+	ajaxRequest(fullName + a2bURL, "POST", "targetMapId=" + task.targetId, function(ajaxResp) {
+		profileAttackPrepare(ajaxResp,task,button);
+	}, function() {
+		setProfileAttackResult(task,profileStrings[16],false);
+	});
+}
+
+function profileAttackPrepare(ajaxResp,task,button) {
+	var parser = new DOMParser();
+	var rpPage = parser.parseFromString(ajaxResp.responseText, "text/html");
+	var bld = $g('build',rpPage);
+	var err = getBuildMessage(bld,'error');
+	if( ! bld ) {
+		setProfileAttackResult(task,profileStrings[16],false);
+		return;
+	}
+	if( err != '' ) {
+		setProfileAttackResult(task,err,false);
+		return;
+	}
+	if( ! confirmProfileAlerts(task,bld) ) {
+		setProfileAttackResult(task,profileStrings[16],false);
+		return;
+	}
+	var inputs = $gt('INPUT',bld);
+	var sParams = '';
+	var needEventType = true;
+	for( var i=0; i<inputs.length; i++ ) {
+		var name = inputs[i].name;
+		if( ! name ) continue;
+		if( name.indexOf('troop[t') !== -1 ) {
+			if( inputs[i].disabled == true ) continue;
+			var troopId = parseInt(name.match(/troop\[t(\d+)\]/)[1]);
+			var troopValue = task.troops[troopId] || 0;
+			sParams += name + "=" + (troopValue > 0 ? troopValue : "") + "&";
+		} else if( name == 'eventType' ) {
+			if( needEventType ) {
+				sParams += "eventType=" + task.eventType + "&";
+				needEventType = false;
+			}
+		} else if( name == 'redeployHero' ) {
+			if( inputs[i].checked ) sParams += name + "=" + inputs[i].value + "&";
+		} else if( inputs[i].type == 'radio' || inputs[i].type == 'checkbox' ) {
+			if( inputs[i].checked ) sParams += name + "=" + inputs[i].value + "&";
+		} else {
+			sParams += name + "=" + inputs[i].value + "&";
+		}
+	}
+	sParams += "ok=ok";
+	ajaxRequest(fullName + a2bURL, "POST", sParams, function(confirmResp) {
+		profileAttackConfirm(confirmResp,task,button);
+	}, function() {
+		setProfileAttackResult(task,profileStrings[16],false);
+	});
+}
+
+function getRallyPointChecksum(doc) {
+	var okBtn = $gc('rallyPointConfirm',doc);
+	if( okBtn.length > 0 ) {
+		var sOnclick = okBtn[0].getAttribute('onclick');
+		var match = sOnclick ? sOnclick.match(/value = '([^']+)'/) : null;
+		if( match ) return match[1];
+	}
+	var checksum = doc.getElementsByName('checksum');
+	if( checksum && checksum.length > 0 ) return checksum[0].value;
+	return '';
+}
+
+function profileAttackConfirm(ajaxResp,task,button) {
+	var parser = new DOMParser();
+	var rpPage = parser.parseFromString(ajaxResp.responseText, "text/html");
+	var bld = $g('build',rpPage);
+	var err = getBuildMessage(bld,'error');
+	if( ! bld ) {
+		setProfileAttackResult(task,profileStrings[16],false);
+		return;
+	}
+	if( err != '' ) {
+		setProfileAttackResult(task,err,false);
+		return;
+	}
+	if( ! confirmProfileAlerts(task,bld) ) {
+		setProfileAttackResult(task,profileStrings[16],false);
+		return;
+	}
+	var checkSum = getRallyPointChecksum(rpPage);
+	if( checkSum == '' ) {
+		setProfileAttackResult(task,profileStrings[16],false);
+		return;
+	}
+	var sParams = '';
+	var selects = $gt('SELECT',bld);
+	for( var i=0; i<selects.length; i++ ) {
+		if( selects[i].name ) sParams += selects[i].name + "=" + selects[i].value + "&";
+	}
+	var inputs = $gt('INPUT',bld);
+	var spySent = false;
+	for( i=0; i<inputs.length; i++ ) {
+		var name = inputs[i].name;
+		if( ! name ) continue;
+		if( /spy/.test(name) ) {
+			if( ! spySent ) {
+				sParams += name + "=" + task.spyMode + "&";
+				spySent = true;
+			}
+		} else if( name == 'checksum' ) {
+			sParams += "checksum=" + checkSum + "&";
+		} else if( inputs[i].type == 'radio' || inputs[i].type == 'checkbox' ) {
+			if( inputs[i].checked ) sParams += name + "=" + inputs[i].value + "&";
+		} else {
+			sParams += name + "=" + inputs[i].value + "&";
+		}
+	}
+	if( sParams.charAt(sParams.length - 1) == '&' ) sParams = sParams.slice(0,-1);
+	ajaxRequest(fullName + a2bURL, "POST", sParams, function() {
+		setProfileAttackResult(task,profileStrings[15],true);
+	}, function() {
+		setProfileAttackResult(task,profileStrings[16],false);
+	});
+}
+
 twb_css = "table#twbtable { background-color: transparent; border-collapse: collapse; } " +
 "table#twbtable thead td, table#twbtable tbody td, table#twbtable tfoot td { border: 1px solid silver; } "
+
+var profile_css = "div#twb_profile_panel { position: fixed; z-index: 9999; top: 55px; left: 30px; right: 30px; max-height: 82vh; overflow: auto; background: #f4f1e8; border: 2px solid #8f6f3c; padding: 8px; box-shadow: 0 2px 12px #333; } " +
+"div#twb_profile_panel table { border-collapse: collapse; width: 100%; } " +
+"div#twb_profile_panel td { border: 1px solid silver; padding: 2px 4px; text-align: center; white-space: nowrap; } " +
+"div#twb_profile_panel thead td { font-weight: bold; background: #ded7c6; } " +
+"div#twb_profile_panel input[type=number] { width: 42px; } " +
+"div#twb_profile_panel .twb_profile_title { font-weight: bold; margin-bottom: 6px; } " +
+"div#twb_profile_panel .twb_profile_close { float: right; font-weight: bold; } " +
+"div#twb_profile_panel .twb_profile_controls { margin-bottom: 6px; } ";
+
+if( window.location.pathname.indexOf('/profile') == 0 ) {
+	initProfileAttack();
+	return;
+}
 
 var build = $g('build');
 if( ! build ) return;
@@ -324,14 +727,12 @@ if( nation < 0 ) return;
 
 RB_addStyle(twb_css);
 
-var a2bURL = "build.php?gid=16&tt=2";
 var wCount = 0;
 var wNr = 0;
 var wlog = '';
 var cLog;
 var tForm = snd[0];
 var tFormFL = true;
-var fullName = window.location.origin + "/";
 
 // build table header
 var tbl = $e('TABLE',[['id','twbtable']]);
