@@ -419,6 +419,14 @@ function getTroopIdFromUnitClass(className) {
 	return troopId == 0 ? 10 : troopId;
 }
 
+function getTroopIdFromInputName(name) {
+	if( ! name ) return 0;
+	var match = name.match(/(?:^|\[)t(\d+)(?:\]|$)/);
+	if( ! match ) return 0;
+	var troopId = parseInt(match[1]);
+	return troopId >= 1 && troopId <= 11 ? troopId : 0;
+}
+
 function readProfileTroopInfo(doc) {
 	var troops = getDefaultProfileTroopInfo();
 	var troopBox = $g('troops',doc) || doc;
@@ -683,12 +691,14 @@ function profileAttackPrepare(ajaxResp,task,button) {
 	var inputs = $gt('INPUT',bld);
 	var sParams = '';
 	var needEventType = true;
+	var troopInputFound = false;
 	for( var i=0; i<inputs.length; i++ ) {
 		var name = inputs[i].name;
 		if( ! name ) continue;
-		if( name.indexOf('troop[t') !== -1 ) {
+		var troopId = getTroopIdFromInputName(name);
+		if( troopId > 0 ) {
 			if( inputs[i].disabled == true ) continue;
-			var troopId = parseInt(name.match(/troop\[t(\d+)\]/)[1]);
+			troopInputFound = true;
 			var troopValue = task.troops[troopId] || 0;
 			sParams += name + "=" + (troopValue > 0 ? troopValue : "") + "&";
 		} else if( name == 'eventType' ) {
@@ -707,6 +717,9 @@ function profileAttackPrepare(ajaxResp,task,button) {
 		} else {
 			sParams += name + "=" + inputs[i].value + "&";
 		}
+	}
+	if( ! troopInputFound ) {
+		for( var t=1; t<12; t++ ) if( task.troops[t] > 0 ) sParams += "troop[t" + t + "]=" + task.troops[t] + "&";
 	}
 	sParams += "ok=ok";
 	ajaxRequest(fullName + a2bURL, "POST", sParams, function(confirmResp) {
