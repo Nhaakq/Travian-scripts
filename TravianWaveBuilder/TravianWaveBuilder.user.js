@@ -21,6 +21,7 @@ var langStrings = ["Add attack", "Remove attack", "Move attack up", "Move attack
 var profileStrings = ["Attack profile", "Select", "Village", "Attack type", "Reinforcement", "Normal attack", "Raid", "Apply first row to selected villages", "Scout mode", "Resources and troops", "Defenses and troops", "Send selected attacks", "No village selected.", "No troops selected for", "Preparing", "Sent", "Failed", "Interval", "ms", "Close", "Hero", "Result", "No villages found on this profile."];
 var fullName = window.location.origin + "/";
 var a2bURL = "build.php?gid=16&tt=2";
+var profileTroopInfo = null;
 
 /*********************** localization ****************************/
 
@@ -376,6 +377,7 @@ function appendProfileAttackButton(villages) {
 
 function initProfileAttack() {
 	RB_addStyle(profile_css);
+	loadProfileTroopInfo();
 	function tryInit() {
 		var villages = parseProfileVillages();
 		if( villages.length > 0 ) {
@@ -393,12 +395,78 @@ function initProfileAttack() {
 	observer.observe(target,{childList:true,subtree:true});
 }
 
+function getDefaultProfileTroopInfo() {
+	var troops = [];
+	for( var i=1; i<11; i++ ) troops[i] = {label:'t' + i, className:'', title:'t' + i};
+	troops[11] = {label:profileStrings[20], className:'unit uhero', title:profileStrings[20]};
+	return troops;
+}
+
+function getTroopIdFromUnitClass(className) {
+	if( ! className ) return 0;
+	if( className.indexOf('uhero') > -1 ) return 11;
+	var match = className.match(/(?:^|\s)u(\d+)(?:\s|$)/);
+	if( ! match ) return 0;
+	var troopId = parseInt(match[1]) % 10;
+	return troopId == 0 ? 10 : troopId;
+}
+
+function readProfileTroopInfo(doc) {
+	var troops = getDefaultProfileTroopInfo();
+	var troopBox = $g('troops',doc) || doc;
+	var imgs = $gt('IMG',troopBox);
+	for( var i=0; i<imgs.length; i++ ) {
+		var className = imgs[i].getAttribute('class') || '';
+		if( className.indexOf('unit') == -1 ) continue;
+		var troopId = getTroopIdFromUnitClass(className);
+		if( troopId < 1 || troopId > 11 ) continue;
+		var title = imgs[i].getAttribute('title') || imgs[i].getAttribute('alt') || troops[troopId].label;
+		troops[troopId] = {
+			label: title || troops[troopId].label,
+			className: className,
+			title: title || troops[troopId].title
+		};
+	}
+	return troops;
+}
+
+function loadProfileTroopInfo(callback) {
+	if( profileTroopInfo ) {
+		if( callback ) callback(profileTroopInfo);
+		return;
+	}
+	ajaxRequest(fullName + a2bURL, "GET", "", function(ajaxResp) {
+		var parser = new DOMParser();
+		var rpPage = parser.parseFromString(ajaxResp.responseText, "text/html");
+		profileTroopInfo = readProfileTroopInfo(rpPage);
+		if( callback ) callback(profileTroopInfo);
+	}, function() {
+		profileTroopInfo = getDefaultProfileTroopInfo();
+		if( callback ) callback(profileTroopInfo);
+	});
+}
+
+function buildProfileTroopHeader(troopId) {
+	var troops = profileTroopInfo || getDefaultProfileTroopInfo();
+	var info = troops[troopId] || {label:'t' + troopId, className:'', title:'t' + troopId};
+	var holder = $e('SPAN',[['class','twb_profile_unit_header'],['title',info.title || info.label]]);
+	if( info.className ) holder.appendChild(trImg(info.className,info.title || info.label));
+	else holder.appendChild($t(info.label));
+	var label = $ee('SPAN',info.label,[['class','twb_profile_unit_label']]);
+	holder.appendChild(label);
+	return holder;
+}
+
 function showProfileAttackPanel(villages) {
 	var old = $g('twb_profile_panel');
 	if( old ) old.parentNode.removeChild(old);
 	if( ! villages || villages.length < 1 ) {
 		alert(profileStrings[22]);
 		return;
+	}
+	if( ! profileTroopInfo ) {
+		loadProfileTroopInfo(function(){ showProfileAttackPanel(villages); });
+		profileTroopInfo = getDefaultProfileTroopInfo();
 	}
 	var wrapper = $e('DIV',[['id','twb_profile_panel']]);
 	var title = $e('DIV',[['class','twb_profile_title']]);
@@ -424,8 +492,7 @@ function showProfileAttackPanel(villages) {
 	hrow.appendChild($c(profileStrings[1]));
 	hrow.appendChild($c(profileStrings[2]));
 	hrow.appendChild($c(profileStrings[3]));
-	for( var i=1; i<11; i++ ) hrow.appendChild($c('t' + i));
-	hrow.appendChild($c(profileStrings[20]));
+	for( var i=1; i<12; i++ ) hrow.appendChild($c(buildProfileTroopHeader(i)));
 	hrow.appendChild($c(profileStrings[8]));
 	hrow.appendChild($c(profileStrings[21]));
 	table.appendChild($ee('THEAD',hrow));
@@ -706,7 +773,10 @@ var profile_css = "div#twb_profile_panel { position: fixed; z-index: 9999; top: 
 "div#twb_profile_panel input[type=number] { width: 42px; } " +
 "div#twb_profile_panel .twb_profile_title { font-weight: bold; margin-bottom: 6px; } " +
 "div#twb_profile_panel .twb_profile_close { float: right; font-weight: bold; } " +
-"div#twb_profile_panel .twb_profile_controls { margin-bottom: 6px; } ";
+"div#twb_profile_panel .twb_profile_controls { margin-bottom: 6px; } " +
+"div#twb_profile_panel .twb_profile_unit_header { display: inline-block; min-width: 54px; } " +
+"div#twb_profile_panel .twb_profile_unit_header img { display: block; margin: 0 auto 2px auto; } " +
+"div#twb_profile_panel .twb_profile_unit_label { display: block; max-width: 68px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; } ";
 
 if( window.location.pathname.indexOf('/profile') == 0 ) {
 	initProfileAttack();
