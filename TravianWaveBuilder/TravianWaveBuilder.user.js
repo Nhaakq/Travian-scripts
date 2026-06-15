@@ -689,23 +689,21 @@ function profileAttackPrepare(ajaxResp,task,button) {
 		return;
 	}
 	var inputs = $gt('INPUT',bld);
-	var sParams = '';
+	var sParams = 'action=troopsSend&';
 	var needEventType = true;
-	var troopInputFound = false;
 	for( var i=0; i<inputs.length; i++ ) {
 		var name = inputs[i].name;
 		if( ! name ) continue;
 		var troopId = getTroopIdFromInputName(name);
 		if( troopId > 0 ) {
 			if( inputs[i].disabled == true ) continue;
-			troopInputFound = true;
-			var troopValue = task.troops[troopId] || 0;
-			sParams += name + "=" + (troopValue > 0 ? troopValue : "") + "&";
 		} else if( name == 'eventType' ) {
 			if( needEventType ) {
 				sParams += "eventType=" + task.eventType + "&";
 				needEventType = false;
 			}
+		} else if( name == 'action' ) {
+			continue;
 		} else if( name == 'x' && ! isNaN(task.targetX) ) {
 			sParams += name + "=" + task.targetX + "&";
 		} else if( name == 'y' && ! isNaN(task.targetY) ) {
@@ -718,9 +716,7 @@ function profileAttackPrepare(ajaxResp,task,button) {
 			sParams += name + "=" + inputs[i].value + "&";
 		}
 	}
-	if( ! troopInputFound ) {
-		for( var t=1; t<12; t++ ) if( task.troops[t] > 0 ) sParams += "troop[t" + t + "]=" + task.troops[t] + "&";
-	}
+	for( var t=1; t<12; t++ ) if( task.troops[t] > 0 ) sParams += "troop[t" + t + "]=" + task.troops[t] + "&";
 	sParams += "ok=ok";
 	ajaxRequest(fullName + a2bURL, "POST", sParams, function(confirmResp) {
 		profileAttackConfirm(confirmResp,task,button);
