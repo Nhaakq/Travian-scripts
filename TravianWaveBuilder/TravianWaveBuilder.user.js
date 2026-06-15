@@ -336,6 +336,14 @@ function getProfileVillageTable() {
 	return null;
 }
 
+function getProfileVillageCoords(row) {
+	var text = row.textContent.replace(/[\u2000-\u20ff]/g,'');
+	var match = text.match(/\((-?\d+)\s*\|\s*(-?\d+)\)/);
+	if( ! match ) match = text.match(/(-?\d+)\s*\|\s*(-?\d+)/);
+	if( ! match ) return null;
+	return {x: parseInt(match[1]), y: parseInt(match[2])};
+}
+
 function parseProfileVillages() {
 	var table = getProfileVillageTable();
 	var villages = [];
@@ -360,7 +368,7 @@ function parseProfileVillages() {
 		if( nameNode.length > 0 ) name = nameNode[0].textContent.onlyText ? nameNode[0].textContent.onlyText().trim() : nameNode[0].textContent.trim();
 		if( name == '' && villageLink ) name = villageLink.textContent.trim();
 		if( name == '' ) name = '#' + targetId;
-		villages.push({id: targetId, name: name});
+		villages.push({id: targetId, name: name, coords: getProfileVillageCoords(rows[i])});
 	}
 	return villages;
 }
@@ -509,6 +517,10 @@ function showProfileAttackPanel(villages) {
 
 function buildProfileAttackRow(village,index) {
 	var row = $e('TR',[['data-target-id',village.id],['data-target-name',village.name]]);
+	if( village.coords ) {
+		row.setAttribute('data-target-x',village.coords.x);
+		row.setAttribute('data-target-y',village.coords.y);
+	}
 	var checkbox = $e('INPUT',[['type','checkbox'],['checked','checked']]);
 	row.appendChild($c(checkbox));
 	row.appendChild($c(village.name));
@@ -593,6 +605,8 @@ function collectProfileAttackTasks() {
 			row: rows[i],
 			targetId: parseInt(rows[i].getAttribute('data-target-id')),
 			targetName: rows[i].getAttribute('data-target-name'),
+			targetX: parseInt(rows[i].getAttribute('data-target-x')),
+			targetY: parseInt(rows[i].getAttribute('data-target-y')),
 			eventType: $gc('twb_profile_type',rows[i])[0].value,
 			troops: troops,
 			spyMode: getCheckedProfileSpy(rows[i])
@@ -642,7 +656,7 @@ function confirmProfileAlerts(task,bld) {
 
 function sendProfileAttackTask(task,button) {
 	setProfileAttackResult(task,profileStrings[14],true);
-	ajaxRequest(fullName + a2bURL, "POST", "targetMapId=" + task.targetId, function(ajaxResp) {
+	ajaxRequest(fullName + a2bURL + "&targetMapId=" + task.targetId, "GET", "", function(ajaxResp) {
 		profileAttackPrepare(ajaxResp,task,button);
 	}, function() {
 		setProfileAttackResult(task,profileStrings[16],false);
@@ -682,6 +696,10 @@ function profileAttackPrepare(ajaxResp,task,button) {
 				sParams += "eventType=" + task.eventType + "&";
 				needEventType = false;
 			}
+		} else if( name == 'x' && ! isNaN(task.targetX) ) {
+			sParams += name + "=" + task.targetX + "&";
+		} else if( name == 'y' && ! isNaN(task.targetY) ) {
+			sParams += name + "=" + task.targetY + "&";
 		} else if( name == 'redeployHero' ) {
 			if( inputs[i].checked ) sParams += name + "=" + inputs[i].value + "&";
 		} else if( inputs[i].type == 'radio' || inputs[i].type == 'checkbox' ) {
