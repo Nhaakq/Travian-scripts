@@ -515,12 +515,14 @@ function showProfileAttackPanel(villages) {
 	var tbody = $e('TBODY');
 	for( i=0; i<villages.length; i++ ) tbody.appendChild(buildProfileAttackRow(villages[i],i));
 	table.appendChild(tbody);
+	table.appendChild(buildProfileTotalsFooter());
 	wrapper.appendChild(table);
 
 	var send = $e('INPUT',[['type','button'],['value',profileStrings[11]],['style','margin-top:8px;']]);
 	send.addEventListener('click', function(){ sendProfileAttacks(send); }, false);
 	wrapper.appendChild(send);
 	document.body.appendChild(wrapper);
+	updateProfileTroopTotals();
 }
 
 function buildProfileAttackRow(village,index) {
@@ -530,6 +532,7 @@ function buildProfileAttackRow(village,index) {
 		row.setAttribute('data-target-y',village.coords.y);
 	}
 	var checkbox = $e('INPUT',[['type','checkbox'],['checked','checked']]);
+	checkbox.addEventListener('change', updateProfileTroopTotals, false);
 	row.appendChild($c(checkbox));
 	row.appendChild($c(village.name));
 	var typeSelect = $e('SELECT',[['class','twb_profile_type']]);
@@ -538,7 +541,10 @@ function buildProfileAttackRow(village,index) {
 	typeSelect.appendChild($ee('OPTION',profileStrings[4],[['value','5']]));
 	row.appendChild($c(typeSelect));
 	for( var i=1; i<12; i++ ) {
-		row.appendChild($c($e('INPUT',[['type','number'],['min','0'],['class','twb_profile_troop'],['data-troop',i],['style','width:42px;']]))); 
+		var troopInput = $e('INPUT',[['type','number'],['min','0'],['class','twb_profile_troop'],['data-troop',i],['style','width:78px;']]);
+		troopInput.addEventListener('input', updateProfileTroopTotals, false);
+		troopInput.addEventListener('change', updateProfileTroopTotals, false);
+		row.appendChild($c(troopInput)); 
 	}
 	var spyBox = $e('DIV');
 	var spyName = 'twb_profile_spy_' + index;
@@ -550,6 +556,40 @@ function buildProfileAttackRow(village,index) {
 	row.appendChild($c(spyBox));
 	row.appendChild($c('',[['class','twb_profile_result']]));
 	return row;
+}
+
+function buildProfileTotalsFooter() {
+	var foot = $e('TFOOT');
+	var row = $e('TR',[['class','twb_profile_totals_row']]);
+	row.appendChild($c('Total',[['colspan','3'],['style','font-weight:bold;text-align:right;']]));
+	for( var i=1; i<12; i++ ) row.appendChild($c('0',[['class','twb_profile_total'],['data-troop',i]]));
+	row.appendChild($c(''));
+	row.appendChild($c(''));
+	foot.appendChild(row);
+	return foot;
+}
+
+function updateProfileTroopTotals() {
+	var table = $g('twb_profile_table');
+	if( ! table || table.tBodies.length < 1 || table.tFoot == null ) return;
+	var totals = [];
+	for( var i=1; i<12; i++ ) totals[i] = 0;
+	var rows = table.tBodies[0].rows;
+	for( i=0; i<rows.length; i++ ) {
+		var inputs = $gt('INPUT',rows[i]);
+		if( inputs.length < 1 || ! inputs[0].checked ) continue;
+		var troopInputs = $gc('twb_profile_troop',rows[i]);
+		for( var j=0; j<troopInputs.length; j++ ) {
+			var troopId = parseInt(troopInputs[j].getAttribute('data-troop'));
+			var troopValue = parseInt(troopInputs[j].value);
+			if( ! isNaN(troopValue) && troopValue > 0 ) totals[troopId] += troopValue;
+		}
+	}
+	var totalCells = $gc('twb_profile_total',table.tFoot);
+	for( i=0; i<totalCells.length; i++ ) {
+		var id = parseInt(totalCells[i].getAttribute('data-troop'));
+		totalCells[i].textContent = totals[id] > 0 ? totals[id] : '0';
+	}
 }
 
 function copyFirstProfileAttackRow() {
@@ -568,6 +608,7 @@ function copyFirstProfileAttackRow() {
 		for( var j=0; j<firstTroops.length; j++ ) rowInputs[j].value = firstTroops[j].value;
 		setCheckedProfileSpy(rows[i],firstSpy);
 	}
+	updateProfileTroopTotals();
 }
 
 function getCheckedProfileSpy(row) {
@@ -797,13 +838,14 @@ var profile_css = "div#twb_profile_panel { position: fixed; z-index: 9999; top: 
 "div#twb_profile_panel table { border-collapse: collapse; width: 100%; } " +
 "div#twb_profile_panel td { border: 1px solid silver; padding: 2px 4px; text-align: center; white-space: nowrap; } " +
 "div#twb_profile_panel thead td { font-weight: bold; background: #ded7c6; } " +
-"div#twb_profile_panel input[type=number] { width: 42px; } " +
+"div#twb_profile_panel input[type=number] { width: 78px; } " +
 "div#twb_profile_panel .twb_profile_title { font-weight: bold; margin-bottom: 6px; } " +
 "div#twb_profile_panel .twb_profile_close { float: right; font-weight: bold; } " +
 "div#twb_profile_panel .twb_profile_controls { margin-bottom: 6px; } " +
 "div#twb_profile_panel .twb_profile_unit_header { display: inline-block; min-width: 54px; } " +
 "div#twb_profile_panel .twb_profile_unit_header img { display: block; margin: 0 auto 2px auto; } " +
-"div#twb_profile_panel .twb_profile_unit_label { display: block; max-width: 68px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; } ";
+"div#twb_profile_panel .twb_profile_unit_label { display: block; max-width: 78px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; } " +
+"div#twb_profile_panel .twb_profile_totals_row td { font-weight: bold; background: #e9e0cc; } ";
 
 if( window.location.pathname.indexOf('/profile') == 0 ) {
 	initProfileAttack();
